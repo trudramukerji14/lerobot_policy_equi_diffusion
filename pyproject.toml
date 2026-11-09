@@ -8,7 +8,8 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "lerobot[diffusion,pusht,training]>=0.7.0",
+    "lerobot[diffusion,metaworld,pusht,training]>=0.7.0",
+    "mujoco<3.17",
 ]
 
 [build-system]
