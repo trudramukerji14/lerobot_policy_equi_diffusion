@@ -1,0 +1,16 @@
+[project]
+name = "lerobot-policy-equi-diffusion"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Tantrik", email = "32596643+trudramukerji14@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "lerobot[diffusion,pusht,training]>=0.7.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
