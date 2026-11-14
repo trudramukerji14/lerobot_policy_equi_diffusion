@@ -10,7 +10,9 @@
 set -euo pipefail
 
 JOB="${JOB:-baseline}"
-STEPS="${STEPS:-30000}"          # TODO: set from the paper once the epoch count is verified
+STEPS="${STEPS:-27500}"          # paper: 50000/n epochs = 1000 epochs for 50 demos; 3521 frames / 128 = 27.5 steps/epoch
+EVAL_FREQ="${EVAL_FREQ:-550}"    # paper: 50 evals over training (every 20 epochs)
+EVAL_EPISODES="${EVAL_EPISODES:-10}"  # not stated in the paper; trade-off vs. eval time
 BATCH_SIZE="${BATCH_SIZE:-128}"  # paper: 128
 SAVE_FREQ="${SAVE_FREQ:-2000}"
 NUM_WORKERS="${NUM_WORKERS:-8}"
@@ -26,6 +28,7 @@ CMD="uv run python train.py \
   --policy ${POLICY} --horizon 16 --n-action-steps 8 \
   --device cuda --steps ${STEPS} --batch-size ${BATCH_SIZE} \
   --save-freq ${SAVE_FREQ} --num-workers ${NUM_WORKERS} \
+  --env-task metaworld-push-v3 --env-eval-freq ${EVAL_FREQ} --eval-episodes ${EVAL_EPISODES} \
   --job-name ${JOB} --overwrite 2>&1 | tee ${LOG}"
 
 if [ "${AUTO_SHUTDOWN}" = "1" ]; then

@@ -11,10 +11,12 @@ import argparse
 import shutil
 from pathlib import Path
 
-from lerobot.configs.default import DatasetConfig, TrackioConfig
+from lerobot.configs.default import DatasetConfig, EvalConfig, TrackioConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+from lerobot.envs.configs import MetaworldEnvConfig
+from lerobot.optim.ema import WarmupEMAConfig
 from lerobot.utils.feature_utils import dataset_to_policy_features
 from lerobot.policies.factory import make_policy_config
 from lerobot.scripts import lerobot_train
@@ -39,6 +41,9 @@ def start_training(
     horizon=None,
     n_action_steps=None,
     drop_features=None,
+    ema=True,
+    env_task=None,
+    eval_episodes=10,
 ):
     dataset = DatasetConfig(repo_id=repo_id, root=root, episodes=episodes)
     policy = make_policy_config(policy_name)
@@ -77,6 +82,11 @@ def start_training(
         save_freq=save_freq,
         env_eval_freq=env_eval_freq,
         num_workers=num_workers,
+        # Paper: EMA is used. WarmupEMAConfig defaults are the Diffusion Policy reference (power 0.75, max 0.9999).
+        ema=WarmupEMAConfig() if ema else None,
+        # In-training sim eval needs an env; only built when requested.
+        env=MetaworldEnvConfig(task=env_task) if env_task else None,
+        eval=EvalConfig(n_episodes=eval_episodes, batch_size=1),
     )
 
     lerobot_train.train(train_config)
@@ -105,6 +115,11 @@ if __name__ == "__main__":
                    help="dataset input features to exclude, e.g. observation.environment_state")
     p.add_argument("--horizon", type=int, default=None)
     p.add_argument("--n-action-steps", type=int, default=None)
+    p.add_argument("--ema", action=argparse.BooleanOptionalAction, default=True,
+                   help="EMA of weights (paper uses it); --no-ema to disable")
+    p.add_argument("--env-task", default=None,
+                   help="metaworld task for in-training sim eval, e.g. metaworld-push-v3")
+    p.add_argument("--eval-episodes", type=int, default=10, help="episodes per in-training eval")
     a = p.parse_args()
     episodes = list(range(a.episodes[0], a.episodes[1] + 1)) if a.episodes else None
 
@@ -114,6 +129,7 @@ if __name__ == "__main__":
         log_freq=a.log_freq, save_freq=a.save_freq, env_eval_freq=a.env_eval_freq,
         num_workers=a.num_workers, trackio=a.trackio, overwrite_checkpoint=a.overwrite,
         episodes=episodes, horizon=a.horizon, n_action_steps=a.n_action_steps,
-        drop_features=a.drop_features,
+        drop_features=a.drop_features, ema=a.ema, env_task=a.env_task,
+        eval_episodes=a.eval_episodes,
     )
     print(f"Checkpoint: {ckpt}")
