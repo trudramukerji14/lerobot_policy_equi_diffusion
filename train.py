@@ -44,6 +44,8 @@ def start_training(
     ema=True,
     env_task=None,
     eval_episodes=10,
+    resize_shape=None,
+    crop_ratio=1.0,
 ):
     dataset = DatasetConfig(repo_id=repo_id, root=root, episodes=episodes)
     policy = make_policy_config(policy_name)
@@ -57,6 +59,14 @@ def start_training(
         policy.input_features = {
             k: v for k, v in feats.items() if v.type is not FeatureType.ACTION and k not in drop_features
         }
+    if resize_shape is not None:
+        # The config derives crop_shape from resize_shape/crop_ratio only in __post_init__ (already run),
+        # so set all three here. Random crop at train time, center crop at eval.
+        policy.resize_shape = tuple(resize_shape)
+        policy.crop_ratio = crop_ratio
+        policy.crop_shape = (
+            (int(resize_shape[0] * crop_ratio), int(resize_shape[1] * crop_ratio)) if crop_ratio < 1.0 else None
+        )
     if horizon is not None:
         policy.horizon = horizon
     if n_action_steps is not None:
@@ -120,6 +130,10 @@ if __name__ == "__main__":
     p.add_argument("--env-task", default=None,
                    help="metaworld task for in-training sim eval, e.g. metaworld-push-v3")
     p.add_argument("--eval-episodes", type=int, default=10, help="episodes per in-training eval")
+    p.add_argument("--resize-shape", type=int, nargs=2, metavar=("H", "W"), default=None,
+                   help="resize images before the backbone (native metaworld is 480x480, too big for batch 128)")
+    p.add_argument("--crop-ratio", type=float, default=1.0,
+                   help="crop = resize * ratio (random in training); 1.0 disables cropping")
     a = p.parse_args()
     episodes = list(range(a.episodes[0], a.episodes[1] + 1)) if a.episodes else None
 
@@ -130,6 +144,6 @@ if __name__ == "__main__":
         num_workers=a.num_workers, trackio=a.trackio, overwrite_checkpoint=a.overwrite,
         episodes=episodes, horizon=a.horizon, n_action_steps=a.n_action_steps,
         drop_features=a.drop_features, ema=a.ema, env_task=a.env_task,
-        eval_episodes=a.eval_episodes,
+        eval_episodes=a.eval_episodes, resize_shape=a.resize_shape, crop_ratio=a.crop_ratio,
     )
     print(f"Checkpoint: {ckpt}")
