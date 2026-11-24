@@ -4,6 +4,8 @@
 #   bash scripts/gpu_run.sh                      # baseline run with defaults below
 #   STEPS=20 BATCH_SIZE=8 JOB=gpu_smoke bash scripts/gpu_run.sh   # cheap 20-step GPU test
 #   AUTO_SHUTDOWN=1 bash scripts/gpu_run.sh      # power off the machine when training ends
+#   RESUME=outputs/<JOB>_diffusion_lerobot_metaworld_mt50/checkpoints/<step>/pretrained_model \
+#     JOB=<JOB> bash scripts/gpu_run.sh          # continue a previous session
 #
 # Watch:   tmux attach -t train      (detach with Ctrl-b then d)
 # Log:     tail -f outputs/<JOB>.log
@@ -20,9 +22,21 @@ RESIZE="${RESIZE:-128 128}"
 CROP_RATIO="${CROP_RATIO:-0.9}"
 BATCH_SIZE="${BATCH_SIZE:-128}"  # paper: 128
 SAVE_FREQ="${SAVE_FREQ:-2000}"
-NUM_WORKERS="${NUM_WORKERS:-8}"
+# 8 workers prefetching 480x480 float32 batches (~0.7GB each at batch 128) got OOM-killed by a 47GB
+# pod memory limit; 4 ran fine. Check /sys/fs/cgroup/memory.max on a new pod.
+NUM_WORKERS="${NUM_WORKERS:-4}"
+# Run the eval episodes of each in-training eval in parallel (one ~3 min episode vs 10 in series).
+EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-${EVAL_EPISODES}}"
 POLICY="${POLICY:-diffusion}"
 AUTO_SHUTDOWN="${AUTO_SHUTDOWN:-0}"
+# Resume a previous session: RESUME=<.../checkpoints/<step>/pretrained_model> with the same JOB/STEPS.
+# (Never combined with --overwrite, which would delete the run being resumed.)
+RESUME="${RESUME:-}"
+if [ -n "${RESUME}" ]; then
+  RUN_FLAGS="--resume ${RESUME}"; TEE_FLAGS="-a"
+else
+  RUN_FLAGS="--overwrite"; TEE_FLAGS=""
+fi
 
 mkdir -p outputs
 LOG="outputs/${JOB}.log"
@@ -35,7 +49,8 @@ CMD="uv run python train.py \
   --save-freq ${SAVE_FREQ} --num-workers ${NUM_WORKERS} --log-freq ${LOG_FREQ} \
   ${RESIZE:+--resize-shape ${RESIZE} --crop-ratio ${CROP_RATIO}} \
   --env-task metaworld-push-v3 --env-eval-freq ${EVAL_FREQ} --eval-episodes ${EVAL_EPISODES} \
-  --job-name ${JOB} --overwrite 2>&1 | tee ${LOG}"
+  --eval-batch-size ${EVAL_BATCH_SIZE} \
+  --job-name ${JOB} ${RUN_FLAGS} 2>&1 | tee ${TEE_FLAGS} ${LOG}"
 
 if [ "${AUTO_SHUTDOWN}" = "1" ]; then
   # Shut down whether training succeeded or failed, so a crash doesn't keep billing.

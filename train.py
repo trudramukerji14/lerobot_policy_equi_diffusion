@@ -9,7 +9,10 @@ Examples:
 """
 import argparse
 import shutil
+import sys
 from pathlib import Path
+
+from lerobot.configs import parser
 
 from lerobot.configs.default import DatasetConfig, EvalConfig, TrackioConfig
 from lerobot.configs.train import TrainPipelineConfig
@@ -46,7 +49,18 @@ def start_training(
     eval_episodes=10,
     resize_shape=None,
     crop_ratio=1.0,
+    eval_batch_size=1,
+    eval_max_episode_steps=None,
+    resume_from=None,
+    eval_async_envs=True,
 ):
+    if resume_from:
+        if overwrite_checkpoint:
+            raise ValueError("--overwrite would delete the run being resumed; drop it when using --resume.")
+        # LeRobot resolves the checkpoint to resume from by re-reading `--config_path` out of sys.argv
+        # (see TrainPipelineConfig._resolve_resume_checkpoint), so make sure it is there.
+        if parser.parse_arg("config_path") is None:
+            sys.argv.append(f"--config_path={resume_from}")
     dataset = DatasetConfig(repo_id=repo_id, root=root, episodes=episodes)
     policy = make_policy_config(policy_name)
     policy.push_to_hub = False
@@ -96,8 +110,22 @@ def start_training(
         ema=WarmupEMAConfig() if ema else None,
         # In-training sim eval needs an env; only built when requested.
         env=MetaworldEnvConfig(task=env_task) if env_task else None,
-        eval=EvalConfig(n_episodes=eval_episodes, batch_size=1),
+        # batch_size > 1 steps that many eval episodes in parallel, so one batched policy call serves
+        # all of them (a single episode is ~3 min on GPU, mostly the 100-step denoising per action chunk).
+        eval=EvalConfig(
+            n_episodes=eval_episodes,
+            batch_size=eval_batch_size,
+            max_episode_steps=eval_max_episode_steps,
+            use_async_envs=eval_async_envs,
+        ),
+        resume=bool(resume_from),
     )
+    if resume_from:
+        # validate() skips the policy's optimizer/scheduler presets on resume, expecting them from the
+        # checkpoint's train_config.json (which we don't load). Set them here; the optimizer state and
+        # scheduler position themselves are restored from the checkpoint's training_state.
+        train_config.optimizer = policy.get_optimizer_preset()
+        train_config.scheduler = policy.get_scheduler_preset()
 
     lerobot_train.train(train_config)
     return output_dir / "checkpoints" / "last" / "pretrained_model"
@@ -134,6 +162,16 @@ if __name__ == "__main__":
                    help="resize images before the backbone (native metaworld is 480x480, too big for batch 128)")
     p.add_argument("--crop-ratio", type=float, default=1.0,
                    help="crop = resize * ratio (random in training); 1.0 disables cropping")
+    p.add_argument("--eval-batch-size", type=int, default=1,
+                   help="eval episodes run in parallel per in-training eval (use = --eval-episodes)")
+    p.add_argument("--eval-max-episode-steps", type=int, default=None,
+                   help="cap eval episode length (default: env default, 500 for metaworld)")
+    p.add_argument("--eval-async-envs", action=argparse.BooleanOptionalAction, default=True,
+                   help="run eval envs in worker processes; --no-eval-async-envs keeps them in-process "
+                        "(needed on macOS, where OpenGL can't render in worker processes)")
+    p.add_argument("--resume", default=None, metavar="CKPT",
+                   help="resume from a checkpoint's pretrained_model dir or train_config.json; "
+                        "use the same --job-name/--output-dir/--steps, and not --overwrite")
     a = p.parse_args()
     episodes = list(range(a.episodes[0], a.episodes[1] + 1)) if a.episodes else None
 
@@ -145,5 +183,7 @@ if __name__ == "__main__":
         episodes=episodes, horizon=a.horizon, n_action_steps=a.n_action_steps,
         drop_features=a.drop_features, ema=a.ema, env_task=a.env_task,
         eval_episodes=a.eval_episodes, resize_shape=a.resize_shape, crop_ratio=a.crop_ratio,
+        eval_batch_size=a.eval_batch_size, eval_max_episode_steps=a.eval_max_episode_steps,
+        resume_from=a.resume, eval_async_envs=a.eval_async_envs,
     )
     print(f"Checkpoint: {ckpt}")
